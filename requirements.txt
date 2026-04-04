@@ -1,0 +1,9 @@
+fastapi
+uvicorn
+redis
+torch
+pandas
+scikit-learn
+locust
+matplotlib
+seaborn
