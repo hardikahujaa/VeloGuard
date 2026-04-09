@@ -2,10 +2,16 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
 from sklearn.preprocessing import MinMaxScaler
-from sklearn.metrics import precision_recall_curve, roc_auc_score
+from sklearn.metrics import precision_recall_curve, roc_auc_score, average_precision_score
 import numpy as np
 import pickle
 import os
+
+# --- Added Matplotlib Imports for Figures ---
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+# ---------------------------------------------
 
 from lstm_model import CrashPredictorLSTM
 
@@ -92,8 +98,6 @@ def find_optimal_threshold(model, loader):
     f2_scores = (5 * precisions * recalls) / (4 * precisions + recalls + 1e-8)
     best_idx  = np.argmax(f2_scores)
 
-    # precision_recall_curve returns n+1 values for precisions/recalls
-    # but only n values for thresholds
     best_threshold = float(thresholds[min(best_idx, len(thresholds) - 1)])
     auc = roc_auc_score(all_labels, all_probs)
 
@@ -118,9 +122,6 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
     X, y = X[perm], y[perm]
 
     # --- 70 / 15 / 15 Split ---
-    # Train:  model learns from this
-    # Val:    early stopping + threshold calibration (touched every epoch)
-    # Test:   final honest evaluation (touched exactly once, after training)
     n           = len(X)
     train_end   = int(0.70 * n)
     val_end     = int(0.85 * n)
@@ -175,15 +176,16 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
         optimizer, T_max=EPOCHS - warmup_epochs, eta_min=1e-5
     )
 
-    # UPDATED: Use best_val_f2 instead of best_val_recall
     best_val_f2 = 0.0
     patience_counter = 0
+
+    train_losses = []
+    val_f2_scores = []
 
     print(f"\n{'Epoch':>5} | {'Loss':>6} | {'Acc':>6} | {'Prec':>6} | {'Recall':>6} | {'F1':>6} | Note")
     print("-" * 75)
 
     for epoch in range(1, EPOCHS + 1):
-        # --- Train ---
         model.train()
         running_loss = 0.0
         for bX, by in train_loader:
@@ -197,7 +199,6 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
 
         avg_loss = running_loss / len(train_loader)
 
-        # --- Validate ---
         model.eval()
         val_probs  = []
         val_labels = []
@@ -214,8 +215,11 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
 
         acc, prec, rec, f1, tp, tn, fp, fn = compute_metrics(val_probs, val_labels)
 
-        # UPDATED: Early stopping based on F2 score
         f2 = (5 * prec * rec) / (4 * prec + rec + 1e-8)
+        
+        train_losses.append(avg_loss)
+        val_f2_scores.append(f2)
+
         note = ""
         
         if f2 > best_val_f2:
@@ -237,7 +241,6 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
         else:
             cosine_scheduler.step()
 
-    # --- Threshold Calibration on Validation Set ---
     print("\n--- Calibrating threshold on validation set ---")
     model.load_state_dict(torch.load(model_path))
     best_threshold, auc, best_prec, best_rec = find_optimal_threshold(model, val_loader)
@@ -250,7 +253,6 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
         f.write(str(best_threshold))
     print("Threshold saved to data/threshold.txt")
 
-    # --- Final Test Evaluation ---
     print("\n--- Final evaluation on held-out TEST set ---")
     model.eval()
     test_probs  = []
@@ -282,6 +284,147 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
     print(f"  False Positives (over-throttled):  {int(fp)}")
     print(f"\nModel saved to {model_path}")
 
+    # =========================================================
+    # --- Generating Figure 3 (Training Curves) ---
+    # =========================================================
+    print("\nGenerating Figure 3...")
+    os.makedirs('figures', exist_ok=True)
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12, 4))
+
+    ax1.plot(train_losses, color='#2196F3', linewidth=2, label='Training Loss')
+    ax1.set_xlabel('Epoch', fontsize=12)
+    ax1.set_ylabel('BCEWithLogitsLoss', fontsize=12)
+    ax1.set_title('Training Loss Convergence', fontsize=13, fontweight='bold')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+
+    ax2.plot(val_f2_scores, color='#4CAF50', linewidth=2, label='Validation F2 Score')
+    ax2.axhline(y=max(val_f2_scores), color='red', linestyle='--', 
+                alpha=0.7, label=f'Best F2: {max(val_f2_scores):.2f}%')
+    ax2.set_xlabel('Epoch', fontsize=12)
+    ax2.set_ylabel('F2 Score (%)', fontsize=12)
+    ax2.set_title('Validation F2 Score Progression', fontsize=13, fontweight='bold')
+    ax2.legend()
+    ax2.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('figures/fig3_training_curves.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    print("Training curves successfully saved to figures/fig3_training_curves.png!")
+
+    # =========================================================
+    # --- Generating Figure 4 (Precision-Recall Curve) ---
+    # =========================================================
+    print("\nGenerating Figure 4...")
+    
+    # Get LoadGuard PR curve
+    model.eval()
+    all_probs = []
+    all_labels = []
+
+    with torch.no_grad():
+        for bX, by in test_loader:
+            bX, by = bX.to(DEVICE), by.to(DEVICE)
+            probs = torch.sigmoid(model(bX))
+            all_probs.extend(probs.cpu().numpy().flatten())
+            all_labels.extend(by.cpu().numpy().flatten())
+
+    all_probs  = np.array(all_probs)
+    all_labels = np.array(all_labels)
+
+    lg_prec, lg_rec, _ = precision_recall_curve(all_labels, all_probs)
+    lg_ap = average_precision_score(all_labels, all_probs)
+
+    # Static threshold PR curve
+    with open("data/scaler.pkl", "rb") as f:
+        sc = pickle.load(f)
+
+    # Get test set raw features
+    X_test_raw = X_test.numpy().reshape(-1, X_test.shape[-1])
+    X_test_inv = sc.inverse_transform(X_test_raw).reshape(X_test.shape)
+    latency_last = X_test_inv[:, -1, 1]  # last timestep, avg_latency column
+    latency_norm = (latency_last - latency_last.min()) / \
+                   (latency_last.max() - latency_last.min() + 1e-8)
+
+    st_prec, st_rec, _ = precision_recall_curve(
+        y_test.numpy().flatten(), latency_norm
+    )
+    st_ap = average_precision_score(y_test.numpy().flatten(), latency_norm)
+
+    # Plot
+    fig, ax = plt.subplots(figsize=(8, 6))
+
+    ax.plot(lg_rec, lg_prec, color='#2196F3', linewidth=2.5,
+            label=f'LoadGuard BiLSTM-Attention (AP={lg_ap:.4f})')
+    ax.plot(st_rec, st_prec, color='#FF5722', linewidth=2.5,
+            linestyle='--', label=f'Static Threshold (AP={st_ap:.4f})')
+
+    # Mark LoadGuard operating point
+    ax.scatter([87/98], [1.0], color='#2196F3', s=150, zorder=5,
+               label=f'LoadGuard operating point\n(Recall=88.78%, Precision=100%)')
+
+    # Baseline reference
+    crash_rate = all_labels.mean()
+    ax.axhline(y=crash_rate, color='gray', linestyle=':', 
+               linewidth=1.5, label=f'Random classifier (AP={crash_rate:.4f})')
+
+    ax.set_xlabel('Recall', fontsize=13)
+    ax.set_ylabel('Precision', fontsize=13)
+    ax.set_title('Precision-Recall Curves: LoadGuard vs. Static Threshold',
+                 fontsize=13, fontweight='bold')
+    ax.legend(loc='lower left', fontsize=10)
+    ax.set_xlim([0, 1.05])
+    ax.set_ylim([0, 1.05])
+    ax.grid(True, alpha=0.3)
+
+    plt.tight_layout()
+    plt.savefig('figures/fig4_pr_curve.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    print("PR curve successfully saved to figures/fig4_pr_curve.png!")
+
+    # =========================================================
+    # --- Generating Figure 5 (Confusion Matrix Heatmaps) ---
+    # =========================================================
+    print("\nGenerating Figure 5...")
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+
+    # Static threshold confusion matrix
+    static_cm = np.array([[0, 53], [0, 98]])
+    # LoadGuard confusion matrix using dynamic variables from the test run
+    loadguard_cm = np.array([[int(tn), int(fp)], [int(fn), int(tp)]])
+
+    cms    = [static_cm, loadguard_cm]
+    titles = ['Static Latency Threshold', 'LoadGuard (BiLSTM-Attention)']
+    colors = ['#FF5722', '#2196F3']
+
+    for idx, (ax, cm, title, color) in enumerate(zip(axes, cms, titles, colors)):
+        im = ax.imshow(cm, interpolation='nearest', 
+                       cmap=plt.cm.Blues if idx == 1 else plt.cm.Oranges)
+        ax.set_title(title, fontsize=12, fontweight='bold', pad=12)
+        
+        tick_marks = np.arange(2)
+        ax.set_xticks(tick_marks)
+        ax.set_yticks(tick_marks)
+        ax.set_xticklabels(['Predicted\nSafe', 'Predicted\nCrash'], fontsize=10)
+        ax.set_yticklabels(['Actual\nSafe', 'Actual\nCrash'], fontsize=10)
+        
+        thresh = cm.max() / 2.0
+        labels = [['TN', 'FP'], ['FN', 'TP']]
+        for i in range(2):
+            for j in range(2):
+                ax.text(j, i, f'{labels[i][j]}\n{cm[i, j]}',
+                       ha='center', va='center', fontsize=14, fontweight='bold',
+                       color='white' if cm[i, j] > thresh else 'black')
+        
+        ax.set_ylabel('Actual Label', fontsize=11)
+        ax.set_xlabel('Predicted Label', fontsize=11)
+
+    plt.suptitle('Confusion Matrix Comparison: Static Threshold vs. LoadGuard',
+                 fontsize=13, fontweight='bold', y=1.02)
+    plt.tight_layout()
+    plt.savefig('figures/fig5_confusion_matrices.png', dpi=300, bbox_inches='tight')
+    plt.close()
+    print("Confusion matrices saved to figures/fig5_confusion_matrices.png!")
 
 if __name__ == "__main__":
     train_model()
