@@ -11,6 +11,8 @@ Static rate limiters are dead. Classical algorithms like token buckets and fixed
 
 **LoadGuard** is an AI-driven, closed-loop API rate limiter designed for FastAPI. Powered by a Bidirectional LSTM with temporal attention, it doesn't just count instantaneous requests; it reads the 60-second temporal trajectory of your server's telemetry. It predicts crashes *before* they happen and automatically applies a 4-tier graduated throttling policy via Redis in under 1 second.
 
+![Live Demo](fig6_live_demo.png)
+
 ## ✨ Key Features
 * 🧠 **BiLSTM with Temporal Attention:** Learns the characteristic signatures of imminent crashes vs. genuine recovery, completely eliminating false-positive 429 errors.
 * 📉 **Graduated Throttling:** Drops limits proportionally based on AI probability thresholds rather than hard-blocking all traffic:
@@ -46,4 +48,3 @@ Clone the repository and install the dependencies:
 git clone [https://github.com/hardikahujaa/Load-Guard-.git](https://github.com/hardikahujaa/Load-Guard-.git)
 cd Load-Guard-
 pip install -r requirements.txt
-![Live Demo](fig6_live_demo.png)
