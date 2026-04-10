@@ -27,7 +27,7 @@ os.makedirs("data", exist_ok=True)
 def compute_metrics(preds, labels, threshold=0.5):
     """
     Computes TP, TN, FP, FN and derives accuracy, precision, recall, F1.
-    Recall is the primary metric for LoadGuard — missing a crash is catastrophic.
+    Recall is the primary metric for VeloGuard — missing a crash is catastrophic.
     """
     binary_preds = (preds >= threshold).astype(float)
 
@@ -76,7 +76,7 @@ def find_optimal_threshold(model, loader):
     """
     Finds the optimal classification threshold using the F2 score on the
     validation set. F2 penalises false negatives 4x more than false positives,
-    which is correct for LoadGuard — missing a crash is worse than over-throttling.
+    which is correct for VeloGuard — missing a crash is worse than over-throttling.
     """
     model.eval()
     all_probs  = []
@@ -126,7 +126,7 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
     train_end   = int(0.70 * n)
     val_end     = int(0.85 * n)
 
-    X_train, y_train = X[:train_end],      y[:train_end]
+    X_train, y_train = X[:train_end],       y[:train_end]
     X_val,   y_val   = X[train_end:val_end], y[train_end:val_end]
     X_test,  y_test  = X[val_end:],        y[val_end:]
 
@@ -317,7 +317,6 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
     # =========================================================
     print("\nGenerating Figure 4...")
     
-    # Get LoadGuard PR curve
     model.eval()
     all_probs = []
     all_labels = []
@@ -332,17 +331,15 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
     all_probs  = np.array(all_probs)
     all_labels = np.array(all_labels)
 
-    lg_prec, lg_rec, _ = precision_recall_curve(all_labels, all_probs)
-    lg_ap = average_precision_score(all_labels, all_probs)
+    vg_prec, vg_rec, _ = precision_recall_curve(all_labels, all_probs)
+    vg_ap = average_precision_score(all_labels, all_probs)
 
-    # Static threshold PR curve
     with open("data/scaler.pkl", "rb") as f:
         sc = pickle.load(f)
 
-    # Get test set raw features
     X_test_raw = X_test.numpy().reshape(-1, X_test.shape[-1])
     X_test_inv = sc.inverse_transform(X_test_raw).reshape(X_test.shape)
-    latency_last = X_test_inv[:, -1, 1]  # last timestep, avg_latency column
+    latency_last = X_test_inv[:, -1, 1]  
     latency_norm = (latency_last - latency_last.min()) / \
                    (latency_last.max() - latency_last.min() + 1e-8)
 
@@ -351,26 +348,23 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
     )
     st_ap = average_precision_score(y_test.numpy().flatten(), latency_norm)
 
-    # Plot
     fig, ax = plt.subplots(figsize=(8, 6))
 
-    ax.plot(lg_rec, lg_prec, color='#2196F3', linewidth=2.5,
-            label=f'LoadGuard BiLSTM-Attention (AP={lg_ap:.4f})')
+    ax.plot(vg_rec, vg_prec, color='#2196F3', linewidth=2.5,
+            label=f'VeloGuard BiLSTM-Attention (AP={vg_ap:.4f})')
     ax.plot(st_rec, st_prec, color='#FF5722', linewidth=2.5,
             linestyle='--', label=f'Static Threshold (AP={st_ap:.4f})')
 
-    # Mark LoadGuard operating point
     ax.scatter([87/98], [1.0], color='#2196F3', s=150, zorder=5,
-               label=f'LoadGuard operating point\n(Recall=88.78%, Precision=100%)')
+               label=f'VeloGuard operating point\n(Recall=88.78%, Precision=100%)')
 
-    # Baseline reference
     crash_rate = all_labels.mean()
     ax.axhline(y=crash_rate, color='gray', linestyle=':', 
                linewidth=1.5, label=f'Random classifier (AP={crash_rate:.4f})')
 
     ax.set_xlabel('Recall', fontsize=13)
     ax.set_ylabel('Precision', fontsize=13)
-    ax.set_title('Precision-Recall Curves: LoadGuard vs. Static Threshold',
+    ax.set_title('Precision-Recall Curves: VeloGuard vs. Static Threshold',
                  fontsize=13, fontweight='bold')
     ax.legend(loc='lower left', fontsize=10)
     ax.set_xlim([0, 1.05])
@@ -388,13 +382,11 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
     print("\nGenerating Figure 5...")
     fig, axes = plt.subplots(1, 2, figsize=(10, 4))
 
-    # Static threshold confusion matrix
     static_cm = np.array([[0, 53], [0, 98]])
-    # LoadGuard confusion matrix using dynamic variables from the test run
-    loadguard_cm = np.array([[int(tn), int(fp)], [int(fn), int(tp)]])
+    velo_cm = np.array([[int(tn), int(fp)], [int(fn), int(tp)]])
 
-    cms    = [static_cm, loadguard_cm]
-    titles = ['Static Latency Threshold', 'LoadGuard (BiLSTM-Attention)']
+    cms    = [static_cm, velo_cm]
+    titles = ['Static Latency Threshold', 'VeloGuard (BiLSTM-Attention)']
     colors = ['#FF5722', '#2196F3']
 
     for idx, (ax, cm, title, color) in enumerate(zip(axes, cms, titles, colors)):
@@ -413,13 +405,13 @@ def train_model(tensors_path="data/processed_tensors.pt", model_path="data/model
         for i in range(2):
             for j in range(2):
                 ax.text(j, i, f'{labels[i][j]}\n{cm[i, j]}',
-                       ha='center', va='center', fontsize=14, fontweight='bold',
-                       color='white' if cm[i, j] > thresh else 'black')
+                        ha='center', va='center', fontsize=14, fontweight='bold',
+                        color='white' if cm[i, j] > thresh else 'black')
         
         ax.set_ylabel('Actual Label', fontsize=11)
         ax.set_xlabel('Predicted Label', fontsize=11)
 
-    plt.suptitle('Confusion Matrix Comparison: Static Threshold vs. LoadGuard',
+    plt.suptitle('Confusion Matrix Comparison: Static Threshold vs. VeloGuard',
                  fontsize=13, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.savefig('figures/fig5_confusion_matrices.png', dpi=300, bbox_inches='tight')

@@ -3,7 +3,7 @@ version: '3.8'
 services:
   redis:
     image: redis:latest
-    container_name: loadguard_redis
+    container_name: VeloGuard_redis
     ports:
       - "6379:6379"
     command: redis-server --appendonly yes

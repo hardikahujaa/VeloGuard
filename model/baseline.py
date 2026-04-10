@@ -1,5 +1,5 @@
 """
-baseline.py — Static Threshold Baseline for LoadGuard
+baseline.py — Static Threshold Baseline for VeloGuard
 
 This script evaluates a rule-based baseline that mimics what most production
 systems do today: throttle when latency exceeds a fixed threshold.
@@ -152,9 +152,9 @@ def run_baseline(tensors_path="data/processed_tensors.pt"):
     print(f"{'Static Threshold (latency>1000ms)':<35} {rec:>7.2f}% {prec:>9.2f}% {f1:>7.2f}% {auc:>7.4f}")
     print(f"{'Always Throttle':<35} {rec2:>7.2f}% {prec2:>9.2f}% {f12:>7.2f}% {'N/A':>8}")
     print(f"{'Never Throttle':<35} {rec3:>7.2f}% {prec3:>9.2f}% {f13:>7.2f}% {'N/A':>8}")
-    print(f"{'BiLSTM-Attention (LoadGuard)':<35} {'88.78%':>8} {'100.00%':>10} {'94.05%':>8} {'0.9878':>8}")
+    print(f"{'BiLSTM-Attention (VeloGuard)':<35} {'88.78%':>8} {'100.00%':>10} {'94.05%':>8} {'0.9878':>8}")
     print()
-    print("Note: LoadGuard row uses your best single-run result.")
+    print("Note: VeloGuard row uses your best single-run result.")
     print("Replace with mean ± std after completing 5 runs.")
 
 

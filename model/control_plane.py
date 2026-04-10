@@ -8,11 +8,12 @@ import redis.asyncio as aioredis
 import torch
 import os
 import pickle
-
+from datetime import datetime
 from lstm_model import CrashPredictorLSTM
 
+
 async def control_plane_worker():
-    print("Starting LoadGuard AI Control Plane...")
+    print("Starting VeloGuard AI Control Plane...")
 
     while (not os.path.exists("data/model.pth") or
            not os.path.exists("data/scaler.pkl") or
@@ -23,31 +24,30 @@ async def control_plane_worker():
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
     model = CrashPredictorLSTM(input_size=4, hidden_size=128, num_layers=2).to(device)
-    model.load_state_dict(torch.load("data/model.pth", map_location=device, weights_only=True))
+    model.load_state_dict(
+        torch.load("data/model.pth", map_location=device, weights_only=True)
+    )
     model.eval()
 
     with open("data/scaler.pkl", "rb") as f:
         scaler = pickle.load(f)
 
     # Load data-derived threshold — calibrated using F2 score on validation set
-    base_threshold = float(open("data/threshold.txt").read().strip())
-    print(f"Loaded optimal threshold: {base_threshold:.4f}")
-
-    # Graduated tiers built relative to the calibrated threshold
-    # WARNING tier starts exactly at the optimal threshold
-    # CRITICAL adds 0.15 above that
-    # BLACKHOLE at 0.92 — only for near-certain crashes
-    warn_threshold     = base_threshold
-    critical_threshold = min(base_threshold + 0.15, 0.90)
+    base_threshold      = float(open("data/threshold.txt").read().strip())
+    warn_threshold      = base_threshold
+    critical_threshold  = min(base_threshold + 0.15, 0.90)
     blackhole_threshold = 0.92
 
+    print(f"\nLoaded optimal threshold: {base_threshold:.4f}")
     print(f"Throttle tiers:")
-    print(f"  SAFE     → prob < {warn_threshold:.4f}     → 100 RPS")
-    print(f"  WARNING  → prob >= {warn_threshold:.4f}    → 60 RPS")
-    print(f"  CRITICAL → prob >= {critical_threshold:.4f}    → 20 RPS")
-    print(f"  BLACKHOLE→ prob >= {blackhole_threshold:.4f}   → 0 RPS")
+    print(f"  SAFE      → prob <  {warn_threshold:.4f}  → 100 RPS")
+    print(f"  WARNING   → prob >= {warn_threshold:.4f}  →  60 RPS")
+    print(f"  CRITICAL  → prob >= {critical_threshold:.4f}  →  20 RPS")
+    print(f"  BLACKHOLE → prob >= {blackhole_threshold:.4f}  →   0 RPS")
 
-    redis_client = aioredis.from_url("redis://localhost:6379", decode_responses=True)
+    redis_client = aioredis.from_url(
+        "redis://localhost:6379", decode_responses=True
+    )
 
     log_path     = "data/api_traffic.log"
     lookback     = 60
@@ -55,7 +55,9 @@ async def control_plane_worker():
     features     = ['rps', 'avg_latency', 'cpu_usage', 'mem_usage']
 
     await redis_client.set("global_ai_limit", 100)
-    print("Control plane live. Monitoring...\n")
+    print("\nControl plane live. Monitoring...\n")
+    print(f"{'Time':<12} {'State':<22} {'Probability':<16} {'Limit'}")
+    print("-" * 65)
 
     while True:
         try:
@@ -96,11 +98,15 @@ async def control_plane_worker():
             df_agg = pd.DataFrame(intervals).dropna()
 
             if len(df_agg) < lookback:
+                remaining = lookback - len(df_agg)
+                print(f"  Collecting data... {len(df_agg)}/{lookback} seconds "
+                      f"({remaining} more needed)", end='\r')
                 await asyncio.sleep(1)
                 continue
 
-            last_window              = df_agg.tail(lookback).copy()
-            last_window[features]    = scaler.transform(last_window[features])
+            last_window           = df_agg.tail(lookback).copy()
+            last_window[features] = scaler.transform(last_window[features])
+
             X_tensor = torch.tensor(
                 last_window[features].values, dtype=torch.float32
             ).unsqueeze(0).to(device)
@@ -108,7 +114,7 @@ async def control_plane_worker():
             with torch.no_grad():
                 prob = torch.sigmoid(model(X_tensor)).item()
 
-            # Graduated throttling tiers using calibrated threshold
+            # Graduated throttling using calibrated threshold
             if prob >= blackhole_threshold:
                 limit, state = 0,   "BLACKHOLE  🔴"
             elif prob >= critical_threshold:
@@ -119,7 +125,10 @@ async def control_plane_worker():
                 limit, state = 100, "SAFE       🟢"
 
             await redis_client.set("global_ai_limit", limit)
-            print(f"[{state}] prob={prob:.4f} | limit={limit} RPS")
+
+            # Timestamped output — makes Figure 6 readable in the paper
+            timestamp = datetime.now().strftime("%H:%M:%S")
+            print(f"[{timestamp}] [{state}] prob={prob:.4f} | limit={limit:>3} RPS")
 
         except Exception as e:
             print(f"Control plane error: {e}")

@@ -4,7 +4,7 @@ import threading
 from fastapi import FastAPI, Request
 from .middleware import RateLimitMiddleware
 
-app = FastAPI(title="LoadGuard Vulnerable API")
+app = FastAPI(title="VeloGuard Vulnerable API")
 
 app.add_middleware(RateLimitMiddleware)
 

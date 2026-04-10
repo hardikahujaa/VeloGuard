@@ -1,4 +1,4 @@
-# LoadGuard 🛡️
+# VeloGuard 🛡️
 **Adaptive AI-Driven API Rate Limiting Using Bidirectional LSTM with Temporal Attention**
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue.svg)](https://www.python.org/)
@@ -9,7 +9,7 @@
 ## Stop Guessing. Start Predicting.
 Static rate limiters are dead. Classical algorithms like token buckets and fixed windows can't tell the difference between a DDoS attack and a server that is just recovering from a traffic spike—resulting in up to 35% of legitimate users getting falsely blocked during queue drainage.
 
-**LoadGuard** is an AI-driven, closed-loop API rate limiter designed for FastAPI. Powered by a Bidirectional LSTM with temporal attention, it doesn't just count instantaneous requests; it reads the 60-second temporal trajectory of your server's telemetry. It predicts crashes *before* they happen and automatically applies a 4-tier graduated throttling policy via Redis in under 1 second.
+**VeloGuard** is an AI-driven, closed-loop API rate limiter designed for FastAPI. Powered by a Bidirectional LSTM with temporal attention, it doesn't just count instantaneous requests; it reads the 60-second temporal trajectory of your server's telemetry. It predicts crashes *before* they happen and automatically applies a 4-tier graduated throttling policy via Redis in under 1 second.
 
 ![Live Demo](fig6_live_demo.png)
 
@@ -26,7 +26,7 @@ Static rate limiters are dead. Classical algorithms like token buckets and fixed
 ---
 
 ## 🏗️ System Architecture
-LoadGuard evaluates 60-second rolling windows of four key telemetry features:
+VeloGuard evaluates 60-second rolling windows of four key telemetry features:
 1. **RPS (Requests Per Second)**
 2. **Average Response Latency**
 3. **CPU Utilization**

@@ -2,7 +2,7 @@ from locust import HttpUser, task, between, LoadTestShape
 import math
 import random
 
-class LoadGuardUser(HttpUser):
+class VeloGuardUser(HttpUser):
     wait_time = between(0.1, 0.5)
 
     @task
